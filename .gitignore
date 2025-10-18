@@ -1,0 +1,6 @@
+.vscode
+tools/rootfs-utils
+rootfs-unpack
+work
+*.bin
+*.iso

@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="../../static/js/vue.js"></script>
+    <script src="../../static/js/plugin.js"></script>
+    <script src="../../static/js/element.js"></script>
+    <link rel="stylesheet" href="../../static/css/plugin.css" type="text/css" />
+    <link rel="stylesheet" href="../../static/css/element.css" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  </head>
+
+  <body>
+    <div
+      id="app"
+      class="wrapper row"
+      v-loading="loading"
+      :element-loading-text="loading_text"
+    >
+      <div class="box clearfix">
+        <div class="title_h4 clearfix">
+          <h4>软件源管理</h4>
+        </div>
+        <div>
+          <div class="search_box clearfix">
+            <div class="search_box_fr">
+              <a @click="addRow" class="btn btn_green">添加</a>
+              <a @click="importFile" class="btn">导入</a>
+              <div class="search_box_nav">
+                <a class="btn">导出</a>
+                <ul>
+                  <li @click="exportFile('csv')"><p>CSV</p></li>
+                  <li @click="exportFile('txt')"><p>TXT</p></li>
+                </ul>
+              </div>
+              <a @click="batchEnableRows" class="btn">启用</a>
+              <a @click="batchDisableRows" class="btn">停用</a>
+              <a @click="batchDeleteRows" class="btn">删除</a>
+              
+              <!-- 导入对话框 -->
+              <div v-show="showImportDialog" class="el-dialog__wrapper" style="z-index: 2008">
+                <div class="el-dialog el-dialog--tiny" style="top: 15%">
+                  <div class="el-dialog__header">
+                    <span class="el-dialog__title">导入</span>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      class="el-dialog__headerbtn"
+                      @click="closeImportDialog"
+                    >
+                      <i class="el-dialog__close el-icon el-icon-close"></i>
+                    </button>
+                  </div>
+                  <div class="el-dialog__body">
+                    <div class="helpService" style="position: absolute; top: 15px; right: 20px">
+                      <a class="close_edit close_ico" @click="closeImportDialog">×</a>
+                    </div>
+                    <div class="tl" style="width: 80%; margin: 0px auto">
+                      <div class="type_file file_W tl margin-r-5 inline_blcok">
+                        <input
+                          type="text"
+                          v-model="selectedFileName"
+                          placeholder="支持 CSV 及 TXT"
+                          class="inptText textfield rounded"
+                          readonly
+                        />
+                        <input
+                          type="button"
+                          class="btn btn_blue rounded type_file_button height26 fl"
+                          value="选择文件"
+                          @click="triggerFileSelect"
+                        />
+                        <input
+                          ref="fileInput"
+                          @change="handleFileSelect"
+                          type="file"
+                          accept=".txt,.csv"
+                          class="type_file_file fileField"
+                        />
+                      </div>
+                      <input
+                        type="button"
+                        value="确定导入"
+                        class="btn btn_green rounded height26"
+                        @click="confirmImport"
+                      />
+                      <div class="h5"></div>
+                      <label class="checkbox">
+                        <input type="checkbox" v-model="mergeData" />
+                        <span></span>
+                        合并到当前数据
+                      </label>
+                      <div class="type_file_state margin-t-5">{{ importStatus }}</div>
+                      <div class="h20"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="table_box clearfix">
+              <table
+                width="100%"
+                cellspacing="0"
+                cellpadding="0"
+                border="0"
+                class="table table_w checkbox_checked"
+              >
+                <tbody>
+                  <tr>
+                    <th><samp></samp><p><span>名称</span></p></th>
+                    <th><samp></samp><p><span>URL</span></p></th>
+                    <th><samp></samp><p><span>状态</span></p></th>
+                    <th><samp></samp><p><span>操作</span></p></th>
+                    <th class="td_check tc tm">
+                      <samp></samp>
+                      <label class="checkbox input_opera">
+                        <input type="checkbox" @change="toggleSelectAll" v-model="selectAll" />
+                        <span></span>
+                      </label>
+                    </th>
+                  </tr>
+                  <tr v-if="isAdding" class="editing">
+                    <td>
+                      <input
+                        v-model="editForm.name"
+                        type="text"
+                        placeholder="输入名称"
+                        class="inptText td_input"
+                      />
+                    </td>
+                    <td>
+                      <input
+                        v-model="editForm.url"
+                        type="text"
+                        placeholder="输入URL"
+                        class="inptText td_input"
+                      />
+                    </td>
+                    <td><span class="colorY">编辑中</span></td>
+                    <td class="td_opear">
+                      <a @click="confirmSave" class="confirm-btn">确定</a>
+                      <a @click="cancelEdit" class="cancel-btn">取消</a>
+                    </td>
+                    <td class="tc tm"></td>
+                  </tr>
+                  <tr v-if="sources.length === 0 && !isAdding">
+                    <td colspan="5" class="empty-data">暂无数据</td>
+                  </tr>
+                  <tr v-for="(source, index) in sources" :key="source.id" :class="{ editing: editIndex === index }">
+                    <td>
+                      <input
+                        v-if="editIndex === index"
+                        v-model="editForm.name"
+                        type="text"
+                        class="inptText td_input"
+                      />
+                      <span v-else>{{ source.name }}</span>
+                    </td>
+                    <td>
+                      <input
+                        v-if="editIndex === index"
+                        v-model="editForm.url"
+                        type="text"
+                        class="inptText td_input"
+                      />
+                      <span v-else>{{ source.url }}</span>
+                    </td>
+                    <td>
+                      <span v-if="editIndex === index" class="colorY">编辑中</span>
+                      <span v-else-if="source.enabled" class="colorG">已启用</span>
+                      <span v-else class="colorR">已停用</span>
+                    </td>
+                    <td class="td_opear">
+                      <template v-if="editIndex === index">
+                        <a @click="confirmSave" class="confirm-btn">确定</a>
+                        <a @click="cancelEdit" class="cancel-btn">取消</a>
+                      </template>
+                      <template v-else>
+                        <a @click="editRow(index)">编辑</a>
+                        <a @click="deleteRow(source.id)">删除</a>
+                        <a v-if="!source.enabled" @click="enableRow(source.id)">启用</a>
+                        <a v-else @click="disableRow(source.id)">停用</a>
+                      </template>
+                    </td>
+                    <td class="tc tm">
+                      <samp></samp>
+                      <label class="checkbox input_opera">
+                        <input type="checkbox" v-model="source.selected" :disabled="editIndex === index" />
+                        <span></span>
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="pager clearfix">
+            <div class="fl pager_divs" style="line-height: 26px">
+              共 {{ sources.length }} 条
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+  <script type="module">
+    var app = new Vue({
+      el: "#app",
+      data: {
+        loading: false,
+        loading_text: "",
+        sources: [],
+        editIndex: -1,
+        isAdding: false,
+        selectAll: false,
+        showImportDialog: false,
+        selectedFileName: "",
+        selectedFile: null,
+        mergeData: false,
+        importStatus: "",
+        editForm: {
+          id: "",
+          name: "",
+          url: "",
+        },
+      },
+      created() {
+        this.loadInitData();
+      },
+      methods: {
+        loadInitData() {
+          var payload = {
+            func_name: "plugin_ctpanel",
+            action: "show",
+            param: { TYPE: "data" },
+          };
+          AjaxPost("/Action/call", payload, (response) => {
+            if (response.Result % 10000 == 0 && response.Data) {
+              if (response.Data.sources && Array.isArray(response.Data.sources)) {
+                this.sources = response.Data.sources.map((item) => ({
+                  id: item.id,
+                  name: item.name,
+                  url: item.url,
+                  enabled: item.enabled == 'yes',
+                  selected: false,
+                }));
+              }
+            }
+          });
+        },
+        addRow() {
+          if (this.isAdding || this.editIndex !== -1) {
+            this.$message.warning("请先完成当前的编辑操作！");
+            return;
+          }
+          this.isAdding = true;
+          this.editForm = { id: "", name: "", url: "" };
+        },
+        editRow(index) {
+          if (this.isAdding || this.editIndex !== -1) {
+            this.$message.warning("请先完成当前的编辑操作！");
+            return;
+          }
+          this.editIndex = index;
+          this.editForm = { ...this.sources[index] };
+        },
+        cancelEdit() {
+          this.isAdding = false;
+          this.editIndex = -1;
+          this.editForm = { id: "", name: "", url: "" };
+        },
+        confirmSave() {
+          if (!this.editForm.name.trim()) {
+            this.$message.warning("请输入软件源名称！");
+            return;
+          }
+          if (!this.editForm.url.trim()) {
+            this.$message.warning("请输入软件源URL！");
+            return;
+          }
+
+          this.loading = true;
+          
+          var payload = {
+            func_name: "plugin_ctpanel",
+            action: this.isAdding ? "add" : "edit",
+            param: this.isAdding 
+              ? { name: this.editForm.name.trim(), url: this.editForm.url.trim() }
+              : { id: this.editForm.id, name: this.editForm.name.trim(), url: this.editForm.url.trim() },
+          };
+          
+          this.loading_text = this.isAdding ? "正在添加..." : "正在更新...";
+
+          AjaxPost("/Action/call", payload, (response) => {
+            this.loading = false;
+            if (response.Result % 10000 == 0) {
+              this.$message({
+                message: this.isAdding ? "添加成功！" : "更新成功！",
+                type: "success",
+              });
+              this.cancelEdit();
+              this.loadInitData();
+            } else {
+              this.$message.error(`操作失败！${response.ErrMsg}`);
+            }
+          });
+        },
+        deleteRow(id) {
+          if (this.isAdding || this.editIndex !== -1) {
+            this.$message.warning("请先完成当前的编辑操作！");
+            return;
+          }
+
+          this.$confirm("确定要删除这个软件源吗？", "提示", {
+            confirmButtonText: "确定",
+            cancelButtonText: "取消",
+            type: "warning",
+          })
+            .then(() => {
+              this.loading = true;
+              this.loading_text = "正在删除...";
+
+              var payload = {
+                func_name: "plugin_ctpanel",
+                action: "del",
+                param: { id: id },
+              };
+
+              AjaxPost("/Action/call", payload, (response) => {
+                this.loading = false;
+                if (response.Result % 10000 == 0) {
+                  this.$message({ message: "删除成功！", type: "success" });
+                  this.loadInitData();
+                } else {
+                  this.$message.error(`删除失败！${response.ErrMsg}`);
+                }
+              });
+            })
+            .catch(() => {});
+        },
+        enableRow(id) {
+          this.loading = true;
+          this.loading_text = "正在启用...";
+
+          var payload = {
+            func_name: "plugin_ctpanel",
+            action: "enable",
+            param: { id: id },
+          };
+
+          AjaxPost("/Action/call", payload, (response) => {
+            this.loading = false;
+            if (response.Result % 10000 == 0) {
+              this.$message({ message: "启用成功！", type: "success" });
+              this.loadInitData();
+            } else {
+              this.$message.error(`启用失败！${response.ErrMsg}`);
+            }
+          });
+        },
+        disableRow(id) {
+          this.loading = true;
+          this.loading_text = "正在停用...";
+
+          var payload = {
+            func_name: "plugin_ctpanel",
+            action: "disable",
+            param: { id: id },
+          };
+
+          AjaxPost("/Action/call", payload, (response) => {
+            this.loading = false;
+            if (response.Result % 10000 == 0) {
+              this.$message({ message: "停用成功！", type: "success" });
+              this.loadInitData();
+            } else {
+              this.$message.error(`停用失败！${response.ErrMsg}`);
+            }
+          });
+        },
+        toggleSelectAll() {
+          this.sources.forEach((source) => {
+            source.selected = this.selectAll;
+          });
+        },
+        batchEnableRows() {
+          const selected = this.sources.filter((s) => s.selected);
+          if (selected.length === 0) {
+            this.$message.warning("请选择要启用的软件源！");
+            return;
+          }
+
+          this.loading = true;
+          this.loading_text = "正在批量启用...";
+
+          let completed = 0;
+          selected.forEach((source) => {
+            var payload = {
+              func_name: "plugin_ctpanel",
+              action: "enable",
+              param: { id: source.id },
+            };
+
+            AjaxPost("/Action/call", payload, (response) => {
+              completed++;
+              if (completed === selected.length) {
+                this.loading = false;
+                this.$message({ message: "批量启用完成！", type: "success" });
+                this.loadInitData();
+              }
+            });
+          });
+        },
+        batchDisableRows() {
+          const selected = this.sources.filter((s) => s.selected);
+          if (selected.length === 0) {
+            this.$message.warning("请选择要停用的软件源！");
+            return;
+          }
+
+          this.loading = true;
+          this.loading_text = "正在批量停用...";
+
+          let completed = 0;
+          selected.forEach((source) => {
+            var payload = {
+              func_name: "plugin_ctpanel",
+              action: "disable",
+              param: { id: source.id },
+            };
+
+            AjaxPost("/Action/call", payload, (response) => {
+              completed++;
+              if (completed === selected.length) {
+                this.loading = false;
+                this.$message({ message: "批量停用完成！", type: "success" });
+                this.loadInitData();
+              }
+            });
+          });
+        },
+        batchDeleteRows() {
+          const selected = this.sources.filter((s) => s.selected);
+          if (selected.length === 0) {
+            this.$message.warning("请选择要删除的软件源！");
+            return;
+          }
+
+          this.$confirm(`确定要删除选中的 ${selected.length} 个软件源吗？`, "提示", {
+            confirmButtonText: "确定",
+            cancelButtonText: "取消",
+            type: "warning",
+          })
+            .then(() => {
+              this.loading = true;
+              this.loading_text = "正在批量删除...";
+
+              let completed = 0;
+              selected.forEach((source) => {
+                var payload = {
+                  func_name: "plugin_ctpanel",
+                  action: "del",
+                  param: { id: source.id },
+                };
+
+                AjaxPost("/Action/call", payload, (response) => {
+                  completed++;
+                  if (completed === selected.length) {
+                    this.loading = false;
+                    this.$message({ message: "批量删除完成！", type: "success" });
+                    this.loadInitData();
+                  }
+                });
+              });
+            })
+            .catch(() => {});
+        },
+        importFile() {
+          if (this.isAdding || this.editIndex !== -1) {
+            this.$message.warning("请先完成当前的编辑操作！");
+            return;
+          }
+          this.showImportDialog = true;
+          this.selectedFileName = "";
+          this.selectedFile = null;
+          this.mergeData = false;
+          this.importStatus = "";
+        },
+        closeImportDialog() {
+          this.showImportDialog = false;
+          this.selectedFileName = "";
+          this.selectedFile = null;
+          this.mergeData = false;
+          this.importStatus = "";
+        },
+        triggerFileSelect() {
+          this.$refs.fileInput.click();
+        },
+        handleFileSelect(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const fileName = file.name.toLowerCase();
+          const fileExtension = fileName.split(".").pop();
+
+          if (!["txt", "csv"].includes(fileExtension)) {
+            this.$message.error("仅支持 TXT、CSV 格式的文件！");
+            this.importStatus = "❌ 文件格式不支持";
+            return;
+          }
+
+          this.selectedFile = file;
+          this.selectedFileName = file.name;
+          this.importStatus = "✓ 文件已选择";
+        },
+        confirmImport() {
+          if (!this.selectedFile) {
+            this.$message.warning("请先选择要导入的文件！");
+            return;
+          }
+
+          const fileName = this.selectedFile.name.toLowerCase();
+          const fileExtension = fileName.split(".").pop();
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              let importedData = [];
+              const content = e.target.result;
+              const lines = content.split("\n").filter((line) => line.trim());
+
+              if (fileExtension === "txt") {
+                for (let line of lines) {
+                  const match = line.match(/name=(.+?)\s+url=(.+)/);
+                  if (match) {
+                    importedData.push({
+                      name: match[1].trim(),
+                      url: match[2].trim(),
+                    });
+                  }
+                }
+              } else if (fileExtension === "csv") {
+                for (let i = 0; i < lines.length; i++) {
+                  if (i === 0 && lines[i].toLowerCase().includes("name")) continue;
+                  const parts = lines[i].split(",").map((part) => part.trim().replace(/"/g, ""));
+                  if (parts.length >= 2) {
+                    importedData.push({
+                      name: parts[0],
+                      url: parts[1],
+                    });
+                  }
+                }
+              }
+
+              if (importedData.length === 0) {
+                this.$message.error("文件中没有找到有效的软件源数据！");
+                this.importStatus = "❌ 未找到有效数据";
+                return;
+              }
+
+              // 如果不合并,先删除所有现有数据
+              if (!this.mergeData && this.sources.length > 0) {
+                this.$confirm(
+                  `当前有 ${this.sources.length} 条数据,导入将覆盖所有现有数据,确定继续吗?`,
+                  "警告",
+                  {
+                    confirmButtonText: "确定覆盖",
+                    cancelButtonText: "取消",
+                    type: "warning",
+                  }
+                )
+                  .then(() => {
+                    this.processImportData(importedData);
+                  })
+                  .catch(() => {
+                    this.importStatus = "❌ 用户取消导入";
+                  });
+              } else {
+                this.processImportData(importedData);
+              }
+            } catch (error) {
+              this.$message.error("文件解析失败：" + error.message);
+              this.importStatus = "❌ 文件解析失败";
+            }
+          };
+
+          reader.readAsText(this.selectedFile, "UTF-8");
+        },
+        processImportData(importedData) {
+          this.loading = true;
+          this.loading_text = "正在导入...";
+          this.importStatus = "⏳ 正在导入...";
+
+          let completed = 0;
+          let successCount = 0;
+
+          importedData.forEach((item) => {
+            var payload = {
+              func_name: "plugin_ctpanel",
+              action: "add",
+              param: { name: item.name, url: item.url },
+            };
+
+            AjaxPost("/Action/call", payload, (response) => {
+              completed++;
+              if (response.Result % 10000 == 0) {
+                successCount++;
+              }
+
+              if (completed === importedData.length) {
+                this.loading = false;
+                if (successCount === importedData.length) {
+                  this.$message({
+                    message: `成功导入 ${successCount} 个软件源！`,
+                    type: "success",
+                  });
+                  this.importStatus = `✓ 成功导入 ${successCount} 个软件源`;
+                  setTimeout(() => {
+                    this.closeImportDialog();
+                  }, 1500);
+                } else {
+                  this.$message.warning(
+                    `导入完成,成功 ${successCount} 个,失败 ${importedData.length - successCount} 个`
+                  );
+                  this.importStatus = `⚠ 成功 ${successCount} 个,失败 ${importedData.length - successCount} 个`;
+                }
+                this.loadInitData();
+              }
+            });
+          });
+        },
+        exportFile(format) {
+          if (this.sources.length === 0) {
+            this.$message.warning("暂无软件源数据可导出！");
+            return;
+          }
+
+          try {
+            let content = "";
+            let filename = "";
+
+            if (format === "txt") {
+              content = this.sources.map((s) => `name=${s.name} url=${s.url}`).join("\n");
+              filename = `software_sources_${this.getDateStr()}.txt`;
+            } else if (format === "csv") {
+              content = "name,url\n" + this.sources.map((s) => `"${s.name}","${s.url}"`).join("\n");
+              filename = `software_sources_${this.getDateStr()}.csv`;
+            }
+
+            const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+
+            this.$message({ message: `成功导出 ${this.sources.length} 个软件源！`, type: "success" });
+          } catch (error) {
+            this.$message.error("导出失败：" + error.message);
+          }
+        },
+        getDateStr() {
+          const now = new Date();
+          return (
+            now.getFullYear() +
+            "-" +
+            String(now.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(now.getDate()).padStart(2, "0") +
+            "_" +
+            String(now.getHours()).padStart(2, "0") +
+            "-" +
+            String(now.getMinutes()).padStart(2, "0")
+          );
+        },
+      },
+    });
+  </script>
+  <style scoped>
+    body {
+      margin: 0;
+    }
+
+    .notice_box {
+      top: 0px;
+      bottom: auto;
+    }
+
+    .table tbody tr:hover {
+      background-color: #f5f7fa;
+    }
+
+    .table tbody tr.editing {
+      background-color: #fff9e6;
+    }
+
+    .table tbody tr input.inptText {
+      width: 95%;
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    .table tbody tr input.inptText:focus {
+      border-color: #007bff;
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+    }
+
+    .table tbody tr .td_opear a {
+      margin-right: 10px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .table tbody tr .td_opear a:hover {
+      text-decoration: underline;
+    }
+
+    .confirm-btn {
+      color: #67c23a !important;
+    }
+
+    .cancel-btn {
+      color: #f56c6c !important;
+    }
+
+    .empty-data {
+      padding: 20px;
+      color: #999;
+      text-align: center;
+    }
+
+    .colorG {
+      color: #67c23a;
+    }
+
+    .colorR {
+      color: #f56c6c;
+    }
+
+    .colorY {
+      color: #e6a23c;
+    }
+
+    .el-dialog__wrapper {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      overflow: auto;
+      margin: 0;
+      background-color: rgba(0, 0, 0, 0.5);
+    }
+
+    .el-dialog {
+      position: relative;
+      margin: 0 auto auto 0;
+      background: #fff;
+      border-radius: 2px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      box-sizing: border-box;
+      width: 50%;
+    }
+
+    .el-dialog--tiny {
+      width: 30%;
+    }
+
+    .el-dialog__header {
+      padding: 20px 20px 10px;
+    }
+
+    .el-dialog__title {
+      line-height: 24px;
+      font-size: 18px;
+      color: #303133;
+    }
+
+    .el-dialog__headerbtn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .el-dialog__close {
+      color: #909399;
+    }
+
+    .el-dialog__close:hover {
+      color: #409eff;
+    }
+
+    .el-dialog__body {
+      padding: 30px 20px;
+      color: #606266;
+      font-size: 14px;
+      word-break: break-all;
+    }
+
+    .type_file_file {
+      position: absolute;
+      opacity: 0;
+      width: 100px;
+      cursor: pointer;
+    }
+
+    .type_file_state {
+      color: #909399;
+      font-size: 12px;
+      min-height: 20px;
+    }
+  </style>
+</html>
