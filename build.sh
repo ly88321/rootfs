@@ -19,6 +19,7 @@ cd ..
 
 function unpack_iso () {
     local file=$1
+    local decode_flag="$2"
 
     log INFO "Mount iso ..."
     mkdir $work_dir/iso
@@ -61,7 +62,7 @@ function unpack_iso () {
         exit 1
     fi
 
-    unpack_rootfs "$work_dir/rootfs" "$initrd_length"
+    unpack_rootfs "$work_dir/rootfs" "$initrd_length" "$decode_flag"
 }
 
 function unpack_bin () {
@@ -73,6 +74,7 @@ function unpack_bin () {
     #      0-3 bytes        4 to (4+headlen)      (4+headlen) to EOF
 
     local file="$1"
+    local decode_flag="$2"
 
     log INFO "Export bin header ..."
     headlen=$(printf "%u" 0x$(hexdump -v -n 4 $file -e '4/1 "%02x"'))
@@ -116,12 +118,23 @@ function unpack_bin () {
         exit 1
     fi
 
-    unpack_rootfs "$work_dir/rootfs"
+    unpack_rootfs "$work_dir/rootfs" "" "$decode_flag"
 }
 
 function unpack_rootfs () {
     local file="$1"
     local initrd_length="$2"
+    local decode_flag="$3"
+    local decode_file="$file"
+
+    if [ "$decode_flag" = "" ]; then
+        decode_flag="-v1"
+    fi
+
+    if [ "$decode_flag" != "-v1" ] && [ "$decode_flag" != "-v2" ] && [ "$decode_flag" != "-v3" ]; then
+        log ERROR "Unknown rootfs decode version: $decode_flag"
+        exit 1
+    fi
 
     if [ "$initrd_length" != "" ]; then
         initrd_length="-l $initrd_length"
@@ -130,7 +143,7 @@ function unpack_rootfs () {
     mkdir $work_dir/rootfs_decrypt
 
     log INFO "Decrypt rootfs ..."
-    tools/rootfs-utils decode $file $work_dir/rootfs_decrypt -v2 $initrd_length
+    tools/rootfs-utils decode $decode_file $work_dir/rootfs_decrypt $decode_flag $initrd_length
     if [ $? -ne 0 ]; then
         log Error "Decrypt rootfs fail!"
         exit 1
@@ -174,6 +187,7 @@ function unpack_rootfs () {
 
 function unpack () {
     local file="$1"
+    local decode_flag="$2"
     if [ ! -f "$file" ]; then
         log ERROR "File not exist."
         exit 1
@@ -186,9 +200,9 @@ function unpack () {
     echo "Process $file file...."
     ext="${file##*.}"
     if [ "$ext" = "iso" ]; then
-        unpack_iso $file
+        unpack_iso $file "$decode_flag"
     elif [ "$ext" = "bin" ]; then
-        unpack_bin $file
+        unpack_bin $file "$decode_flag"
     else
         log ERROR "Unknown file."
         exit 1
@@ -519,9 +533,10 @@ function pack_iso () {
 function patch () {
     local file="$1"
     local patch_dir="$(realpath "$3")"
+    local decode_flag="$7"
 
     log INFO "Unpack file $file"
-    unpack "$file"
+    unpack "$file" "$decode_flag"
     if [ $? -ne 0 ]; then
         log Error "Unpack file fail!"
         exit 1
@@ -607,7 +622,7 @@ case "$1" in
 Usage: $0 <command> [args...]
 
 Commands:
-  unpack <xxx.iso|xxx.bin>
+  unpack <xxx.iso|xxx.bin> [-v1|-v2|-v3]
       unpack iso or bin file
 
   pack_rootfs [firmware_id] [version] [build_time]
@@ -619,7 +634,7 @@ Commands:
   pack_iso [firmware_id] [version] [build_time]
       pack iso file
 
-  patch <xxx.bin|xxx.iso> <out_type:bin|iso> <patch_dir> [firmware_id] [version] [build_time]
+  patch <xxx.bin|xxx.iso> <out_type:bin|iso> <patch_dir> [firmware_id] [version] [build_time] [-v1|-v2|-v3]
       patch iso or bin file
 
   clean
@@ -643,14 +658,16 @@ Args:
 
 Examples:
   $0 unpack xxx.iso
+  $0 unpack xxx.iso -v2
+  $0 unpack xxx.iso -v3
   $0 unpack xxx.bin
   $0 pack_rootfs
   $0 pack_bin Id Version 0
   $0 pack_iso
   $0 patch xxx.iso patch_dir
+  $0 patch xxx.iso iso patch_dir "" "" "" -v3
   $0 patch xxx.bin patch_dir 202509221910
 EOF
     exit 1
     ;;
 esac
-
