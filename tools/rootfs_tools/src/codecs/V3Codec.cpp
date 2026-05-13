@@ -177,7 +177,7 @@ int V3Codec::decrypt(uint8_t *data, size_t *data_size,
         Log::error("  Authentic:  0x%08x", authentic_hash);
         return -1;
     }
-    Log::success("Hash verification: PASSED");
+    Log::info("Hash verification: PASSED");
     if (Log::is_debug()) {
         Log::debug("  Calculated: 0x%08x", calculated_hash);
         Log::debug("  Authentic:  0x%08x", authentic_hash);

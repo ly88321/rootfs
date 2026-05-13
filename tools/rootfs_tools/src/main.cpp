@@ -300,7 +300,7 @@ int main(int argc, char *argv[]) {
     }
     if (out) {
         if (write_file(out, data, data_size) == 0)
-            Log::success("%s completed successfully: %s", operation, out);
+            Log::info("%s completed successfully: %s", operation, out);
         free(out);
     }
 

@@ -13,10 +13,7 @@ iso_files="$(pwd)/iso-boot-files"
 tools_dir="$(pwd)/tools"
 
 . "$tools_dir/utils.sh"
-
-cd "$tools_dir"
-. build_tools.sh
-cd ..
+. "$tools_dir/build_tools.sh"
 
 function unpack_iso () {
     local file=$1
@@ -151,8 +148,10 @@ function unpack_rootfs () {
         pub_key_opt="-u $public_key_file"
     fi
 
+    ensure_rootfs_tool
+
     log INFO "Decrypt rootfs ..."
-    tools/rootfs decrypt "$decode_file" "$work_dir/rootfs_decrypt" $decode_flag $initrd_length $pub_key_opt
+    "$tools_dir/rootfs" decrypt "$decode_file" "$work_dir/rootfs_decrypt" $decode_flag $initrd_length $pub_key_opt
     if [ $? -ne 0 ]; then
         log ERROR "Decrypt rootfs fail!"
         exit 1
@@ -293,14 +292,17 @@ function pack_rootfs () {
         exit 1
     fi
 
-    local grub="$4"
+    local grub_file="$4"
+    local grub=""
+    local append_size=0
     local encrypt_flag="${5:--v2}"
     local private_key_file="$6"
 
-    if [ "$grub" != "" ]; then
-        if [ -f "$grub" ]; then
-            log INFO "Append file $grub"
-            grub="-a $grub"
+    if [ "$grub_file" != "" ]; then
+        if [ -f "$grub_file" ]; then
+            log INFO "Append file $grub_file"
+            grub="-a $grub_file"
+            append_size=$(wc -c < "$grub_file")
         else
             log ERROR "Not found grub.gz"
         fi
@@ -369,16 +371,23 @@ function pack_rootfs () {
         exit 1
     fi
 
+    ensure_rootfs_tool
+
     log INFO "Encrypt rootfs"
-    tools/rootfs encrypt "$work_dir/rootfs.img.xz" "$work_dir/rootfs.img.xz.bin" $encrypt_flag $grub $priv_key_opt
+    "$tools_dir/rootfs" encrypt "$work_dir/rootfs.img.xz" "$work_dir/rootfs.img.xz.bin" $encrypt_flag $grub $priv_key_opt
     if [ $? -ne 0 ]; then
         log ERROR "Encrypt rootfs fail!"
         exit 1
     fi
     firmware_size=$(wc -c < "$work_dir/rootfs.img.xz.bin")
+    initrd_length=$firmware_size
+    if [ "$append_size" -gt 0 ]; then
+        initrd_length=$((firmware_size - append_size))
+    fi
 
     log INFO "Pack rootfs success."
     log INFO "File path: $work_dir/rootfs.img.xz.bin"
+    log INFO "Initrd length: $initrd_length"
 }
 
 function pack_bin () {
@@ -559,7 +568,7 @@ function pack_iso () {
 
     log INFO "Update grub cfg"
     sed -i "s|%version%|$version|g" $work_dir/iso/boot/grub/grub.cfg
-    sed -i "s|%initrd_length%|$firmware_size|g" $work_dir/iso/boot/grub/grub.cfg
+    sed -i "s|%initrd_length%|$initrd_length|g" $work_dir/iso/boot/grub/grub.cfg
     if [ $? -ne 0 ]; then
         log ERROR "Update grub cfg fail!"
         exit 1
@@ -649,6 +658,11 @@ function patch () {
         fi
     done
 
+    clean_work
+
+    log INFO "Switch to $current_pwd"
+    cd $current_pwd
+
     if [ "$new_public_key_file" != "" ]; then
         if [ "$public_key_file" = "" ]; then
             log ERROR "Auto patch vmlinuz requires -u OLD_PUBLIC_KEY"
@@ -661,11 +675,6 @@ function patch () {
             exit 1
         fi
     fi
-
-    clean_work
-
-    log INFO "Switch to $current_pwd"
-    cd $current_pwd
 
     if [ "$out_type" = "iso" ]; then
         pack_iso "$firmware_id" "$version_arg" "$build_time" "$decode_flag" ${private_key_file:+-p "$private_key_file"}
@@ -825,10 +834,7 @@ case "$1" in
     ;;
     clean)
         clean_all
-        log INFO "Clean build tools"
-        if [ -f "tools/rootfs" ]; then
-            rm -f tools/rootfs
-        fi
+        clean_rootfs_tool
     ;;
     *)
     cat <<EOF

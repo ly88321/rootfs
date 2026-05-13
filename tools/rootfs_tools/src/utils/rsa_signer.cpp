@@ -151,6 +151,6 @@ int RsaSigner::verify(const uint8_t *data, size_t size,
     int r = do_verify(pkey, data, size, sig, sig_size);
     EVP_PKEY_free(static_cast<EVP_PKEY *>(pkey));
     if (r != 0) { Log::error("Signature verification FAILED"); return -1; }
-    Log::success("Signature verification: PASSED");
+    Log::info("Signature verification: PASSED");
     return 0;
 }
