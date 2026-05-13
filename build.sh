@@ -20,12 +20,13 @@ cd ..
 function unpack_iso () {
     local file=$1
     local decode_flag="$2"
+    local public_key_file="$3"
 
     log INFO "Mount iso ..."
     mkdir $work_dir/iso
     mount $file $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Mount iso fail!"
+        log ERROR "Mount iso fail!"
         exit 1
     fi
 
@@ -58,11 +59,11 @@ function unpack_iso () {
     log INFO "Umount iso ..."
     umount_retry $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Umount iso fail!"
+        log ERROR "Umount iso fail!"
         exit 1
     fi
 
-    unpack_rootfs "$work_dir/rootfs" "$initrd_length" "$decode_flag"
+    unpack_rootfs "$work_dir/rootfs" "$initrd_length" "$decode_flag" "$public_key_file"
 }
 
 function unpack_bin () {
@@ -75,6 +76,7 @@ function unpack_bin () {
 
     local file="$1"
     local decode_flag="$2"
+    local public_key_file="$3"
 
     log INFO "Export bin header ..."
     headlen=$(printf "%u" 0x$(hexdump -v -n 4 $file -e '4/1 "%02x"'))
@@ -86,7 +88,7 @@ function unpack_bin () {
     dd if=$file bs=$((headlen+4)) skip=1 >> $work_dir/firmware.iso.gz
     gzip -d < $work_dir/firmware.iso.gz > $work_dir/firmware.iso
     if [ $? -ne 0 ]; then
-        log Error "Decompress firmware iso fail!"
+        log ERROR "Decompress firmware iso fail!"
         exit 1
     fi
 
@@ -94,7 +96,7 @@ function unpack_bin () {
     mkdir $work_dir/iso
     mount $work_dir/firmware.iso $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Mount iso fail!"
+        log ERROR "Mount iso fail!"
         exit 1
     fi
 
@@ -114,17 +116,18 @@ function unpack_bin () {
     log INFO "Umount iso ..."
     umount_retry $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Umount iso fail!"
+        log ERROR "Umount iso fail!"
         exit 1
     fi
 
-    unpack_rootfs "$work_dir/rootfs" "" "$decode_flag"
+    unpack_rootfs "$work_dir/rootfs" "" "$decode_flag" "$public_key_file"
 }
 
 function unpack_rootfs () {
     local file="$1"
     local initrd_length="$2"
     local decode_flag="$3"
+    local public_key_file="$4"
     local decode_file="$file"
 
     if [ "$decode_flag" = "" ]; then
@@ -142,10 +145,15 @@ function unpack_rootfs () {
 
     mkdir $work_dir/rootfs_decrypt
 
+    local pub_key_opt=""
+    if [ "$public_key_file" != "" ]; then
+        pub_key_opt="-u $public_key_file"
+    fi
+
     log INFO "Decrypt rootfs ..."
-    tools/rootfs-utils decode $decode_file $work_dir/rootfs_decrypt $decode_flag $initrd_length
+    tools/rootfs decrypt "$decode_file" "$work_dir/rootfs_decrypt" $decode_flag $initrd_length $pub_key_opt
     if [ $? -ne 0 ]; then
-        log Error "Decrypt rootfs fail!"
+        log ERROR "Decrypt rootfs fail!"
         exit 1
     fi
 
@@ -157,7 +165,7 @@ function unpack_rootfs () {
     log INFO "Decompress rootfs ..."
     xz -dkc $work_dir/rootfs_decrypt/rootfs.ext2 > $work_dir/rootfs.ext2
     if [ $? -ne 0 ]; then
-        log Error "Decompress rootfs fail!"
+        log ERROR "Decompress rootfs fail!"
         exit 1
     fi
     
@@ -165,7 +173,7 @@ function unpack_rootfs () {
     mkdir $work_dir/rootfs-mount
     mount $work_dir/rootfs.ext2 $work_dir/rootfs-mount
     if [ $? -ne 0 ]; then
-        log Error "Mount rootfs fail!"
+        log ERROR "Mount rootfs fail!"
         exit 1
     fi
 
@@ -173,21 +181,32 @@ function unpack_rootfs () {
     mkdir $unpack_dir/rootfs
     cp -rfp $work_dir/rootfs-mount/* $unpack_dir/rootfs
     if [ $? -ne 0 ]; then
-        log Error "Copy rootfs to $unpack_dir/rootfs fail!"
+        log ERROR "Copy rootfs to $unpack_dir/rootfs fail!"
         exit 1
     fi
 
     log INFO "Umount iso ..."
     umount_retry $work_dir/rootfs-mount
     if [ $? -ne 0 ]; then
-        log Error "Umount rootfs fail!"
+        log ERROR "Umount rootfs fail!"
         exit 1
     fi
 }
 
 function unpack () {
     local file="$1"
-    local decode_flag="$2"
+    local decode_flag="-v1"
+    local public_key_file=""
+
+    # Parse options from all arguments
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+        case "${args[i]}" in
+            -v1|-v2|-v3) decode_flag="${args[i]}" ;;
+            -u) i=$((i+1)); public_key_file="${args[i]}" ;;
+        esac
+    done
+
     if [ ! -f "$file" ]; then
         log ERROR "File not exist."
         exit 1
@@ -200,9 +219,9 @@ function unpack () {
     echo "Process $file file...."
     ext="${file##*.}"
     if [ "$ext" = "iso" ]; then
-        unpack_iso $file "$decode_flag"
+        unpack_iso $file "$decode_flag" "$public_key_file"
     elif [ "$ext" = "bin" ]; then
-        unpack_bin $file "$decode_flag"
+        unpack_bin $file "$decode_flag" "$public_key_file"
     else
         log ERROR "Unknown file."
         exit 1
@@ -269,11 +288,14 @@ function pack_rootfs () {
 
     update_release_conf "$1" "$2" "$3"
     if [ $? -ne 0 ]; then
-        log Error "Update release file fail!"
+        log ERROR "Update release file fail!"
         exit 1
     fi
 
     local grub="$4"
+    local encrypt_flag="${5:--v2}"
+    local private_key_file="$6"
+
     if [ "$grub" != "" ]; then
         if [ -f "$grub" ]; then
             log INFO "Append file $grub"
@@ -283,19 +305,24 @@ function pack_rootfs () {
         fi
     fi
 
+    local priv_key_opt=""
+    if [ "$private_key_file" != "" ]; then
+        priv_key_opt="-p $private_key_file"
+    fi
+
     mkdir $work_dir
 
     log INFO "Create rootfs.img size 512M"
     dd if=/dev/zero of=$work_dir/rootfs.img bs=512M count=1
     if [ $? -ne 0 ]; then
-        log Error "Create rootfs.img fail!"
+        log ERROR "Create rootfs.img fail!"
         exit 1
     fi
 
     log INFO "Create ext4 filesystem"
     mkfs.ext4 -F -L linuxroot $work_dir/rootfs.img
     if [ $? -ne 0 ]; then
-        log Error "Create ext4 filesystem fail!"
+        log ERROR "Create ext4 filesystem fail!"
         exit 1
     fi
 
@@ -303,51 +330,51 @@ function pack_rootfs () {
     mkdir $work_dir/rootfs-mount
     mount $work_dir/rootfs.img $work_dir/rootfs-mount
     if [ $? -ne 0 ]; then
-        log Error "Mount rootfs fail!"
+        log ERROR "Mount rootfs fail!"
         exit 1
     fi
 
     log INFO "Copy system file"
     cp -rfp $unpack_dir/rootfs/* $work_dir/rootfs-mount
     if [ $? -ne 0 ]; then
-        log Error "Copy system file fail!"
+        log ERROR "Copy system file fail!"
         exit 1
     fi
 
     log INFO "Umount rootfs"
     umount_retry $work_dir/rootfs-mount
     if [ $? -ne 0 ]; then
-        log Error "Umount rootfs fail!"
+        log ERROR "Umount rootfs fail!"
         exit 1
     fi
 
     log INFO "Check and resize rootfs"
     e2fsck -p -f $work_dir/rootfs.img
     if [ $? -ne 0 ]; then
-        log Error "Check rootfs fail!"
+        log ERROR "Check rootfs fail!"
         exit 1
     fi
 
     resize2fs -M $work_dir/rootfs.img
     if [ $? -ne 0 ]; then
-        log Error "Resize rootfs fail!"
+        log ERROR "Resize rootfs fail!"
         exit 1
     fi
 
     log INFO "Compression rootfs"
     xz -zkc -T0 --check=crc32 $work_dir/rootfs.img > $work_dir/rootfs.img.xz
     if [ $? -ne 0 ]; then
-        log Error "Compression rootfs fail!"
+        log ERROR "Compression rootfs fail!"
         exit 1
     fi
 
     log INFO "Encrypt rootfs"
-    local output=$(tools/rootfs-utils encode $work_dir/rootfs.img.xz $work_dir/rootfs.img.xz.bin -v2 $grub)
+    tools/rootfs encrypt "$work_dir/rootfs.img.xz" "$work_dir/rootfs.img.xz.bin" $encrypt_flag $grub $priv_key_opt
     if [ $? -ne 0 ]; then
-        log Error "Encrypt rootfs fail!"
+        log ERROR "Encrypt rootfs fail!"
         exit 1
     fi
-    firmware_size=$(echo $output | grep "Encrypt data size" | awk '{print $4}')
+    firmware_size=$(wc -c < "$work_dir/rootfs.img.xz.bin")
 
     log INFO "Pack rootfs success."
     log INFO "File path: $work_dir/rootfs.img.xz.bin"
@@ -359,9 +386,26 @@ function pack_bin () {
         exit 1
     fi
 
-    pack_rootfs "$1" "$2" "$3"
+    local firmware_id="$1"
+    local version_arg="$2"
+    local build_time="$3"
+    local encrypt_flag="-v2"
+    local private_key_file=""
+
+    # Parse optional flags
+    local i=4
+    while [ $i -le $# ]; do
+        arg="${!i}"
+        case "$arg" in
+            -v1|-v2|-v3) encrypt_flag="$arg" ;;
+            -p) i=$((i+1)); private_key_file="${!i}" ;;
+        esac
+        i=$((i+1))
+    done
+
+    pack_rootfs "$firmware_id" "$version_arg" "$build_time" "" "$encrypt_flag" "$private_key_file"
     if [ $? -ne 0 ]; then
-        log Error "Update release file fail!"
+        log ERROR "Update release file fail!"
         exit 1
     fi
 
@@ -369,7 +413,7 @@ function pack_bin () {
     dd if=/dev/zero of=$work_dir/firmware.iso bs=1024 count=51200
     mkfs.ext2 -L -F $work_dir/firmware.iso
     if [ $? -ne 0 ]; then
-        log Error "Create iso fail!"
+        log ERROR "Create iso fail!"
         exit 1
     fi
 
@@ -377,7 +421,7 @@ function pack_bin () {
     mkdir $work_dir/iso
     mount $work_dir/firmware.iso $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Mount iso fail!"
+        log ERROR "Mount iso fail!"
         exit 1
     fi
 
@@ -386,28 +430,28 @@ function pack_bin () {
     cp $unpack_dir/vmlinuz $work_dir/iso/boot/vmlinuz
     cp $work_dir/rootfs.img.xz.bin $work_dir/iso/boot/rootfs
     if [ $? -ne 0 ]; then
-        log Error "Copy iso file fail!"
+        log ERROR "Copy iso file fail!"
         exit 1
     fi
 
     log INFO "Update grub cfg"
     sed -i "s|%version%|$version|g" $work_dir/iso/boot/grub/grub.cfg
     if [ $? -ne 0 ]; then
-        log Error "Update grub cfg fail!"
+        log ERROR "Update grub cfg fail!"
         exit 1
     fi
 
     log INFO "Umount iso"
     umount_retry $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Umount iso fail!"
+        log ERROR "Umount iso fail!"
         exit 1
     fi
 
     log INFO "Compressed iso"
     gzip -n -c $work_dir/firmware.iso > $work_dir/firmware.iso.gz
     if [ $? -ne 0 ]; then
-        log Error "Compressed iso fail!"
+        log ERROR "Compressed iso fail!"
         exit 1
     fi
 
@@ -482,9 +526,26 @@ function pack_iso () {
         exit 1
     fi
     
-    pack_rootfs "$1" "$2" "$3" "$iso_files/grub.gz"
+    local firmware_id="$1"
+    local version_arg="$2"
+    local build_time="$3"
+    local encrypt_flag="-v2"
+    local private_key_file=""
+
+    # Parse optional flags
+    local i=4
+    while [ $i -le $# ]; do
+        arg="${!i}"
+        case "$arg" in
+            -v1|-v2|-v3) encrypt_flag="$arg" ;;
+            -p) i=$((i+1)); private_key_file="${!i}" ;;
+        esac
+        i=$((i+1))
+    done
+
+    pack_rootfs "$firmware_id" "$version_arg" "$build_time" "$iso_files/grub.gz" "$encrypt_flag" "$private_key_file"
     if [ $? -ne 0 ]; then
-        log Error "Update release file fail!"
+        log ERROR "Update release file fail!"
         exit 1
     fi
     log INFO "Firmware size: $firmware_size"
@@ -499,7 +560,7 @@ function pack_iso () {
     sed -i "s|%version%|$version|g" $work_dir/iso/boot/grub/grub.cfg
     sed -i "s|%initrd_length%|$firmware_size|g" $work_dir/iso/boot/grub/grub.cfg
     if [ $? -ne 0 ]; then
-        log Error "Update grub cfg fail!"
+        log ERROR "Update grub cfg fail!"
         exit 1
     fi
     
@@ -522,7 +583,7 @@ function pack_iso () {
         -isohybrid-gpt-basdat \
         $work_dir/iso
     if [ $? -ne 0 ]; then
-        log Error "Build iso fail!"
+        log ERROR "Build iso fail!"
         exit 1
     fi
 
@@ -532,13 +593,29 @@ function pack_iso () {
 
 function patch () {
     local file="$1"
+    local out_type="$2"
     local patch_dir="$(realpath "$3")"
-    local decode_flag="$7"
+    local firmware_id="${4:-}"
+    local version_arg="${5:-}"
+    local build_time="${6:-}"
+    local decode_flag="-v1"
+    local public_key_file=""
+    local private_key_file=""
+
+    # Allow -v1/-v2/-v3, -u, -p to appear anywhere in the argument list
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+        case "${args[i]}" in
+            -v1|-v2|-v3) decode_flag="${args[i]}" ;;
+            -u) i=$((i+1)); public_key_file="${args[i]}" ;;
+            -p) i=$((i+1)); private_key_file="${args[i]}" ;;
+        esac
+    done
 
     log INFO "Unpack file $file"
-    unpack "$file" "$decode_flag"
+    unpack "$file" "$decode_flag" ${public_key_file:+-u "$public_key_file"}
     if [ $? -ne 0 ]; then
-        log Error "Unpack file fail!"
+        log ERROR "Unpack file fail!"
         exit 1
     fi
 
@@ -574,10 +651,10 @@ function patch () {
     log INFO "Switch to $current_pwd"
     cd $current_pwd
 
-    if [ "$2" = "iso" ]; then
-        pack_iso "$4" "$5" "$6"
-    elif [ "$2" = "bin" ]; then
-        pack_bin "$4" "$5" "$6"
+    if [ "$out_type" = "iso" ]; then
+        pack_iso "$firmware_id" "$version_arg" "$build_time" "$decode_flag" ${private_key_file:+-p "$private_key_file"}
+    elif [ "$out_type" = "bin" ]; then
+        pack_bin "$firmware_id" "$version_arg" "$build_time" "$decode_flag" ${private_key_file:+-p "$private_key_file"}
     fi
 }
 
@@ -613,8 +690,8 @@ case "$1" in
     clean)
         clean_all
         log INFO "Clean build tools"
-        if [ -f "tools/rootfs-utils" ]; then
-            rm -f tools/rootfs-utils
+        if [ -f "tools/rootfs" ]; then
+            rm -f tools/rootfs
         fi
     ;;
     *)
@@ -622,20 +699,25 @@ case "$1" in
 Usage: $0 <command> [args...]
 
 Commands:
-  unpack <xxx.iso|xxx.bin> [-v1|-v2|-v3]
+  unpack <xxx.iso|xxx.bin> [-v1|-v2|-v3] [-u PUBLIC_KEY]
       unpack iso or bin file
+      -u PUBLIC_KEY  Override RSA public key for v3 signature verification
 
   pack_rootfs [firmware_id] [version] [build_time]
       pack rootfs
 
-  pack_bin [firmware_id] [version] [build_time]
+  pack_bin [firmware_id] [version] [build_time] [-v1|-v2|-v3] [-p PRIVATE_KEY]
       pack bin file
+      -v3 -p PRIVATE_KEY  Use v3 format with specified RSA private key for signing
 
-  pack_iso [firmware_id] [version] [build_time]
+  pack_iso [firmware_id] [version] [build_time] [-v1|-v2|-v3] [-p PRIVATE_KEY]
       pack iso file
+      -v3 -p PRIVATE_KEY  Use v3 format with specified RSA private key for signing
 
-  patch <xxx.bin|xxx.iso> <out_type:bin|iso> <patch_dir> [firmware_id] [version] [build_time] [-v1|-v2|-v3]
+  patch <xxx.bin|xxx.iso> <out_type:bin|iso> <patch_dir> [firmware_id] [version] [build_time] [-v1|-v2|-v3] [-u PUBLIC_KEY] [-p PRIVATE_KEY]
       patch iso or bin file
+      -u PUBLIC_KEY  Override RSA public key for v3 unpack verification
+      -p PRIVATE_KEY RSA private key for v3 re-encrypt signing
 
   clean
       clean work dir
@@ -660,13 +742,16 @@ Examples:
   $0 unpack xxx.iso
   $0 unpack xxx.iso -v2
   $0 unpack xxx.iso -v3
+  $0 unpack xxx.iso -v3 -u public.pem
   $0 unpack xxx.bin
   $0 pack_rootfs
   $0 pack_bin Id Version 0
+  $0 pack_bin Id Version 0 -v3 -p private.pem
   $0 pack_iso
-  $0 patch xxx.iso patch_dir
-  $0 patch xxx.iso iso patch_dir "" "" "" -v3
-  $0 patch xxx.bin patch_dir 202509221910
+  $0 pack_iso "" "" "" -v3 -p private.pem
+  $0 patch xxx.iso iso patch_dir
+  $0 patch xxx.iso iso patch_dir "" "" "" -v3 -u public.pem -p private.pem
+  $0 patch xxx.bin bin patch_dir "" "" 202509221910
 EOF
     exit 1
     ;;
