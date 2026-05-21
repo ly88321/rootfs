@@ -2,7 +2,9 @@
 tools/rootfs-utils
 tools/rootfs
 doc
-rootfs-unpack
+rootfs-unpack*
 work
 *.bin
 *.iso
+*.qcow2
+ikuai_diff*

@@ -278,6 +278,72 @@ function update_release_conf () {
     set_conf VERSTRING   "$version_str" "$release_file" always
 }
 
+function build_iso_rootfs_grub () {
+    local output_file="$1"
+    local tail_dir="$work_dir/rootfs-tail-grub"
+    local root_grub="$tail_dir/root.grub"
+    local grub_cfg="$root_grub/boot/grub/grub.cfg"
+    local grub_disk_cfg="$root_grub/boot/grub/grub-disk.cfg"
+
+    if [ "$version" = "" ]; then
+        log ERROR "Version is empty, cannot build rootfs grub tail."
+        exit 1
+    fi
+
+    if [ ! -d "$iso_files/iso" ]; then
+        log ERROR "Not found iso boot files: $iso_files/iso"
+        exit 1
+    fi
+
+    if [ ! -f "$unpack_dir/vmlinuz" ]; then
+        log ERROR "Not found vmlinuz: $unpack_dir/vmlinuz"
+        exit 1
+    fi
+
+    rm -rf "$tail_dir"
+    mkdir -p "$root_grub"
+
+    log INFO "Build rootfs tail grub files"
+    cp -rfp "$iso_files/iso/." "$root_grub"
+    if [ $? -ne 0 ]; then
+        log ERROR "Copy iso boot files fail!"
+        exit 1
+    fi
+
+    rm -f "$root_grub/boot.catalog" "$root_grub/boot/rootfs"
+    cp -fp "$unpack_dir/vmlinuz" "$root_grub/boot/vmlinuz"
+    if [ $? -ne 0 ]; then
+        log ERROR "Copy vmlinuz to rootfs tail grub fail!"
+        exit 1
+    fi
+
+    if [ ! -f "$grub_cfg" ] || [ ! -f "$grub_disk_cfg" ]; then
+        log ERROR "Not found grub cfg in rootfs tail grub."
+        exit 1
+    fi
+
+    sed -i "s|%version%|$version|g" "$grub_cfg" "$grub_disk_cfg"
+    sed -i "s|^set ikversion=.*|set ikversion=$version|g" "$grub_cfg" "$grub_disk_cfg"
+    sed -i 's|set initrd_length=%initrd_length%|set initrd_length=""|g' "$grub_cfg"
+    sed -i 's|initrd_length=%initrd_length%|initrd_length=$3|g' "$grub_cfg"
+    if [ $? -ne 0 ]; then
+        log ERROR "Update rootfs tail grub cfg fail!"
+        exit 1
+    fi
+
+    if grep -R -E "%version%|%initrd_length%" "$grub_cfg" "$grub_disk_cfg" >/dev/null; then
+        log ERROR "Rootfs tail grub cfg still contains template placeholders."
+        exit 1
+    fi
+
+    log INFO "Compress rootfs tail grub"
+    tar -czf "$output_file" -C "$tail_dir" root.grub
+    if [ $? -ne 0 ]; then
+        log ERROR "Compress rootfs tail grub fail!"
+        exit 1
+    fi
+}
+
 function pack_rootfs () {
     if [ ! -d "$unpack_dir" ]; then
         log ERROR "Not found unpack rootfs!"
@@ -292,11 +358,18 @@ function pack_rootfs () {
         exit 1
     fi
 
+    mkdir $work_dir
+
     local grub_file="$4"
     local grub=""
     local append_size=0
     local encrypt_flag="${5:--v2}"
     local private_key_file="$6"
+
+    if [ "$grub_file" = "__auto_iso_grub__" ]; then
+        grub_file="$work_dir/grub.gz"
+        build_iso_rootfs_grub "$grub_file"
+    fi
 
     if [ "$grub_file" != "" ]; then
         if [ -f "$grub_file" ]; then
@@ -305,6 +378,7 @@ function pack_rootfs () {
             append_size=$(wc -c < "$grub_file")
         else
             log ERROR "Not found grub.gz"
+            exit 1
         fi
     fi
 
@@ -312,8 +386,6 @@ function pack_rootfs () {
     if [ "$private_key_file" != "" ]; then
         priv_key_opt="-p $private_key_file"
     fi
-
-    mkdir $work_dir
 
     log INFO "Create rootfs.img size 512M"
     dd if=/dev/zero of=$work_dir/rootfs.img bs=512M count=1
@@ -553,7 +625,7 @@ function pack_iso () {
         i=$((i+1))
     done
 
-    pack_rootfs "$firmware_id" "$version_arg" "$build_time" "$iso_files/grub.gz" "$encrypt_flag" "$private_key_file"
+    pack_rootfs "$firmware_id" "$version_arg" "$build_time" "__auto_iso_grub__" "$encrypt_flag" "$private_key_file"
     if [ $? -ne 0 ]; then
         log ERROR "Update release file fail!"
         exit 1
@@ -567,7 +639,8 @@ function pack_iso () {
     cp $work_dir/rootfs.img.xz.bin $work_dir/iso/boot/rootfs
 
     log INFO "Update grub cfg"
-    sed -i "s|%version%|$version|g" $work_dir/iso/boot/grub/grub.cfg
+    sed -i "s|%version%|$version|g" $work_dir/iso/boot/grub/grub.cfg $work_dir/iso/boot/grub/grub-disk.cfg
+    sed -i "s|^set ikversion=.*|set ikversion=$version|g" $work_dir/iso/boot/grub/grub.cfg $work_dir/iso/boot/grub/grub-disk.cfg
     sed -i "s|%initrd_length%|$initrd_length|g" $work_dir/iso/boot/grub/grub.cfg
     if [ $? -ne 0 ]; then
         log ERROR "Update grub cfg fail!"
